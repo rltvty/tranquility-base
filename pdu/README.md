@@ -37,9 +37,64 @@ Downsampling is handled by an InfluxDB task created automatically on first run.
 
 ## Polling behavior
 
-The Neurio device frequently returns empty data. On each poll tick the service retries (with 0.5s back-off) until a valid sensor reading is returned, then writes to InfluxDB and sleeps for `POLL_INTERVAL` seconds.
+The Neurio device frequently returns empty data. On each poll tick the service retries (with 0.5s back-off) until a valid sensor reading is returned, then writes to InfluxDB.
 
-## Setup
+Polling is **wall-clock aligned** — all instances wake at the same epoch-aligned boundaries (e.g., every 30s: `:00`, `:30`, `:00`...) regardless of when they started. This is critical for multi-box dedup (see below).
+
+## Multi-box redundancy
+
+PDU is designed to run on multiple boxes simultaneously for durability. All instances poll the same Neurio and write to the same InfluxDB buckets.
+
+Deduplication works because:
+1. **Wall-clock aligned polling** — all boxes wake at the same `POLL_INTERVAL` boundaries
+2. **Tick-pinned timestamps** — the timestamp is captured when the tick fires, not after retries complete
+3. **InfluxDB upsert** — identical `measurement + tags + timestamp` = last writer wins (same data)
+
+Requires NTP-synced clocks across boxes (standard on modern Linux).
+
+## Deploying
+
+### Prerequisites
+
+1. SSH key access to target boxes (add entries to `~/.ssh/config`)
+2. A configured `.env` file (see `.env.example`)
+
+### Deploy to a box
+
+```bash
+cd pdu
+./deploy.sh <ssh-host> .env
+```
+
+This will:
+- Create `/opt/pdu` on the remote box
+- Rsync the project files
+- Copy your `.env`
+- Install `uv` if needed and run `uv sync`
+- Install and start the `pdu` systemd service
+
+### Deploy to multiple boxes
+
+```bash
+./deploy.sh cb0 .env
+./deploy.sh cb1 .env
+./deploy.sh cb2 .env
+```
+
+### Manage the service
+
+```bash
+# Check status
+ssh cb0 "sudo systemctl status pdu"
+
+# View logs
+ssh cb0 "journalctl -u pdu -f"
+
+# Restart
+ssh cb0 "sudo systemctl restart pdu"
+```
+
+## Local development
 
 1. **Install dependencies**
    ```bash
@@ -53,35 +108,14 @@ The Neurio device frequently returns empty data. On each poll tick the service r
    # Edit .env with your Neurio IP and InfluxDB Cloud credentials
    ```
 
-3. **Run**
+3. **Run locally**
    ```bash
    uv run python main.py
    ```
 
-### Running as a systemd service
-
-Create `/etc/systemd/system/pdu.service`:
-
-```ini
-[Unit]
-Description=PDU Neurio poller
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-WorkingDirectory=/opt/pdu
-EnvironmentFile=/opt/pdu/.env
-ExecStart=/usr/bin/env uv run python main.py
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Then:
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now pdu
-```
+   If the Neurio is on a remote network, use an SSH tunnel:
+   ```bash
+   ssh -N -L 8080:192.168.10.51:80 <ssh-host>
+   # Then in another terminal:
+   NEURIO_IP=localhost:8080 uv run python main.py
+   ```

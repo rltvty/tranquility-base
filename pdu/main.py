@@ -54,10 +54,24 @@ def main() -> None:
 
     try:
         while not _shutdown:
+            # Sleep until the next poll_interval boundary on the wall clock.
+            # This ensures all boxes wake at the same time regardless of start.
+            now = time.time()
+            next_tick = (now // cfg.poll_interval + 1) * cfg.poll_interval
+            sleep_for = next_tick - now
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+            if _shutdown:
+                break
+
+            # Capture the tick we woke up for — retries may take time but
+            # the timestamp written to InfluxDB should match this boundary.
+            tick_ts = next_tick
+
             readings = _poll_until_valid(http_client, cfg.neurio_ip)
             if not readings:
                 break  # shutdown requested
-            influxdb.write_readings(influx_client, cfg.influxdb_bucket, readings)
+            influxdb.write_readings(influx_client, cfg.influxdb_bucket, readings, tick_ts)
             for r in readings:
                 log.info(
                     "sample_written",
@@ -67,7 +81,6 @@ def main() -> None:
                     voltage_v=r.voltage_v,
                     energy_imported_kwh=r.energy_imported_kwh,
                 )
-            time.sleep(cfg.poll_interval)
     finally:
         http_client.close()
         influx_client.close()

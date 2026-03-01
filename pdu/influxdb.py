@@ -125,8 +125,11 @@ def write_readings(
     client: InfluxDBClient,
     bucket: str,
     readings: list[SensorReading],
+    tick_epoch: float,
 ) -> None:
-    now = datetime.now(timezone.utc)
+    # Use the wall-clock tick boundary computed by the poll loop so that
+    # all boxes produce identical timestamps → InfluxDB upserts (dedup).
+    ts = datetime.fromtimestamp(tick_epoch, tz=timezone.utc)
     write_api = client.write_api(write_options=SYNCHRONOUS)
     points = []
     for r in readings:
@@ -137,7 +140,7 @@ def write_readings(
             .field("reactive_kvar", r.reactive_kvar)
             .field("voltage_v", r.voltage_v)
             .field("energy_imported_kwh", r.energy_imported_kwh)
-            .time(now)
+            .time(ts)
         )
         points.append(p)
     write_api.write(bucket=bucket, record=points)

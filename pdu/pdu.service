@@ -1,0 +1,15 @@
+[Unit]
+Description=PDU — Neurio power sensor poller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/pdu
+EnvironmentFile=/opt/pdu/.env
+ExecStart=/opt/pdu/.venv/bin/python main.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
