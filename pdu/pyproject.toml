@@ -1,0 +1,11 @@
+[project]
+name = "pdu"
+version = "0.1.0"
+description = "Power Distribution Unit — Neurio poller → InfluxDB Cloud"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx",
+    "influxdb-client",
+    "structlog",
+    "python-dotenv",
+]
