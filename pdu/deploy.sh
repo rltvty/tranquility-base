@@ -40,11 +40,13 @@ ssh "$REMOTE" bash -s <<'SETUP'
 set -euo pipefail
 cd /opt/pdu
 
+# Ensure ~/.local/bin is in PATH (not set in non-interactive SSH sessions)
+export PATH="$HOME/.local/bin:$PATH"
+
 # Install uv if missing
 if ! command -v uv &>/dev/null; then
   echo "==> Installing uv"
   curl -LsSf https://astral.sh/uv/install.sh | sh
-  export PATH="$HOME/.local/bin:$PATH"
 fi
 
 # Sync dependencies
@@ -52,14 +54,18 @@ echo "==> Running uv sync"
 uv sync
 SETUP
 
-# Install systemd service (ssh -t for sudo TTY)
-echo "==> Installing systemd service"
+# Install or update systemd service (ssh -t for sudo TTY)
+# Only copy + daemon-reload if the service file changed; always restart.
 ssh -t "$REMOTE" "\
-  sudo cp ${REMOTE_DIR}/pdu.service /etc/systemd/system/pdu.service && \
-  sudo systemctl daemon-reload && \
-  sudo systemctl enable pdu && \
-  sudo systemctl restart pdu && \
-  echo '==> Done! Service status:' && \
+  if ! diff -q ${REMOTE_DIR}/pdu.service /etc/systemd/system/pdu.service &>/dev/null; then
+    echo '==> Installing systemd service'
+    sudo cp ${REMOTE_DIR}/pdu.service /etc/systemd/system/pdu.service
+    sudo systemctl daemon-reload
+    sudo systemctl enable pdu
+  fi
+  echo '==> Restarting pdu service'
+  sudo systemctl restart pdu
+  echo '==> Done! Service status:'
   sudo systemctl status pdu --no-pager || true"
 
 echo "==> Deploy complete: ${REMOTE}"
