@@ -21,22 +21,34 @@ def _handle_signal(signum: int, _frame: object) -> None:
     _shutdown = True
 
 
-def _poll_until_valid(client: httpx.Client, ip: str) -> list[neurio.SensorReading]:
-    """Retry fetching sensor readings until a non-empty result is returned."""
+def _poll_until_valid(
+    client: httpx.Client, ip: str, deadline: float
+) -> list[neurio.SensorReading] | None:
+    """Retry fetching sensor readings until valid or deadline is reached.
+
+    Returns None if the deadline expires or shutdown is requested.
+    """
     attempt = 0
-    while not _shutdown:
+    while not _shutdown and time.time() < deadline:
         attempt += 1
         try:
             readings = neurio.fetch_sensor_readings(ip, client)
             if readings:
                 if attempt > 1:
-                    log.debug("poll_retry_succeeded", attempts=attempt)
+                    log.info("poll_retry_succeeded", attempts=attempt)
                 return readings
             log.debug("poll_empty_response", attempt=attempt)
-        except Exception:
-            log.warning("poll_error", attempt=attempt, exc_info=True)
+        except Exception as exc:
+            # Log the error concisely — full traceback only on first failure
+            if attempt == 1:
+                log.warning("poll_error", attempt=attempt, error=str(exc))
+            else:
+                log.debug("poll_error", attempt=attempt, error=str(exc))
         time.sleep(0.5)
-    return []
+
+    if not _shutdown:
+        log.warning("poll_tick_skipped", attempts=attempt)
+    return None
 
 
 def main() -> None:
@@ -67,10 +79,12 @@ def main() -> None:
             # Capture the tick we woke up for — retries may take time but
             # the timestamp written to InfluxDB should match this boundary.
             tick_ts = next_tick
+            # Deadline: stop retrying before the next tick fires
+            deadline = next_tick + cfg.poll_interval - 1.0
 
-            readings = _poll_until_valid(http_client, cfg.neurio_ip)
-            if not readings:
-                break  # shutdown requested
+            readings = _poll_until_valid(http_client, cfg.neurio_ip, deadline)
+            if readings is None:
+                continue  # tick skipped or shutdown
             influxdb.write_readings(influx_client, cfg.influxdb_bucket, readings, tick_ts)
             for r in readings:
                 log.info(
